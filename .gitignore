@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+
+# Office / temp
+~$*.pptx
+~$*.docx
+~$*.xlsx
+
+# Archives
+*.zip
+
+# Logs
+*.log
+
+# Large binaries (optional): keep evidence, but avoid huge raw captures
+*.mp4
+*.mov
