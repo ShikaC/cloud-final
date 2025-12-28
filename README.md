@@ -54,6 +54,8 @@
 
 - **仓库名**：`cloud-final-班级-第X组-题目编号`  
   示例：`cloud-final-23计科1-第03组-A1`
+- **分支名（强制，每组一个分支）**：`group/班级-第X组-题目编号`  
+  示例：`group/23计科1-第03组-A1`
 - **报告文件**：`《云计算技术》期末大作业报告.md`（或 pdf/docx，但推荐 md）
 - **答辩文件**：`答辩PPT.pdf`
 
@@ -93,6 +95,12 @@
 
 > 如果老师提供了统一组织/课堂仓库，则以老师要求为准；否则按下面流程创建自己的仓库并提交链接。
 
+#### 8.0 分支提交规则（本课程要求）
+
+- **每个小组必须在独立分支提交材料**：不要直接往 `main` 分支提交你们组的内容。
+- **一个分支对应一个小组**：分支命名按第 5 节规范，例如 `group/23计科1-第03组-A1`。
+- **评阅方式**：老师按分支查看各组提交历史与材料；如需汇总，可在截止后由老师统一合并或保留各组分支不合并。
+
 #### 8.1 创建仓库并首次推送（示例命令）
 
 1) 在 GitHub 网页端新建空仓库（不要勾选初始化 README）。
@@ -106,6 +114,23 @@ git commit -m "init: cloud computing final project"
 git branch -M main
 git remote add origin <REMOTE_URL>
 git push -u origin main
+```
+
+#### 8.1.1 创建你们组的分支并在分支提交（必做）
+
+把 `<BRANCH_NAME>` 换成你们组分支名（例如 `group/23计科1-第03组-A1`）：
+
+```bash
+git checkout -b <BRANCH_NAME>
+git push -u origin <BRANCH_NAME>
+```
+
+之后你们组的所有材料更新都在该分支完成并推送：
+
+```bash
+git add .
+git commit -m "update: report/slides/materials"
+git push
 ```
 
 #### 8.2 后续提交
