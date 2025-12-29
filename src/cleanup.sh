@@ -62,17 +62,31 @@ log_warning() {
 cleanup_vm() {
     log_info "清理VM: ${VM_NAME}"
     
+    # 检查virsh命令是否可用
+    if ! command -v virsh >/dev/null 2>&1; then
+        log_warning "virsh未安装，跳过VM清理"
+        return 0
+    fi
+    
     # 检查VM是否存在
     if virsh list --all 2>/dev/null | grep -q "${VM_NAME}"; then
         # 停止VM
-        if virsh list | grep -q "${VM_NAME}"; then
+        if virsh list 2>/dev/null | grep -q "${VM_NAME}"; then
             log_info "停止VM..."
-            virsh destroy "${VM_NAME}" 2>/dev/null || true
+            if virsh destroy "${VM_NAME}" 2>/dev/null; then
+                log_success "VM已停止"
+            else
+                log_warning "停止VM失败，可能已停止"
+            fi
         fi
         
         # 删除VM定义
         log_info "删除VM定义..."
-        virsh undefine "${VM_NAME}" 2>/dev/null || true
+        if virsh undefine "${VM_NAME}" 2>/dev/null; then
+            log_success "VM定义已删除"
+        else
+            log_warning "删除VM定义失败"
+        fi
         
         log_success "VM已清理"
     else
@@ -106,17 +120,31 @@ cleanup_vm() {
 cleanup_docker() {
     log_info "清理Docker容器: ${DOCKER_CONTAINER_NAME}"
     
+    # 检查docker命令是否可用
+    if ! command -v docker >/dev/null 2>&1; then
+        log_warning "Docker未安装，跳过容器清理"
+        return 0
+    fi
+    
     # 检查容器是否存在
     if docker ps -a 2>/dev/null | grep -q "${DOCKER_CONTAINER_NAME}"; then
         # 停止容器
-        if docker ps | grep -q "${DOCKER_CONTAINER_NAME}"; then
+        if docker ps 2>/dev/null | grep -q "${DOCKER_CONTAINER_NAME}"; then
             log_info "停止容器..."
-            docker stop "${DOCKER_CONTAINER_NAME}" 2>/dev/null || true
+            if docker stop "${DOCKER_CONTAINER_NAME}" 2>/dev/null; then
+                log_success "容器已停止"
+            else
+                log_warning "停止容器失败"
+            fi
         fi
         
         # 删除容器
         log_info "删除容器..."
-        docker rm "${DOCKER_CONTAINER_NAME}" 2>/dev/null || true
+        if docker rm "${DOCKER_CONTAINER_NAME}" 2>/dev/null; then
+            log_success "容器已删除"
+        else
+            log_warning "删除容器失败"
+        fi
         
         log_success "Docker容器已清理"
     else
@@ -129,22 +157,65 @@ cleanup_results() {
     if [ "$CLEAN_ALL" = true ]; then
         log_info "清理结果目录..."
         if [ -d "results" ]; then
-            read -p "确定要删除所有实验结果吗? (y/N): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                rm -rf results
-                log_success "结果目录已删除"
+            # 显示结果目录大小
+            local size=$(du -sh results 2>/dev/null | awk '{print $1}')
+            log_info "结果目录大小: ${size:-未知}"
+            
+            # 非交互模式下默认不删除
+            if [[ -t 0 ]]; then
+                # 交互模式
+                read -p "确定要删除所有实验结果吗? (y/N): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    rm -rf results
+                    log_success "结果目录已删除"
+                else
+                    log_info "保留结果目录"
+                fi
             else
-                log_info "保留结果目录"
+                # 非交互模式
+                log_warning "非交互模式，跳过结果目录删除"
+                log_info "如需删除，请在交互模式下运行"
             fi
+        else
+            log_info "结果目录不存在"
         fi
     else
         log_info "使用 --all 参数可同时清理结果目录"
     fi
 }
 
+# 显示帮助信息
+show_help() {
+    cat <<EOF
+使用方法: bash cleanup.sh [选项]
+
+清理实验过程中创建的虚拟机和Docker容器
+
+选项:
+  --all                  同时清理结果目录
+  --vm-name NAME         指定要清理的VM名称（默认: test-vm-nginx）
+  --container-name NAME  指定要清理的容器名称（默认: test-docker-nginx）
+  -h, --help            显示此帮助信息
+
+示例:
+  bash cleanup.sh                    # 清理默认VM和容器
+  bash cleanup.sh --all              # 清理VM、容器和结果目录
+  bash cleanup.sh --vm-name my-vm    # 清理指定名称的VM
+
+EOF
+}
+
 # 主函数
 main() {
+    # 检查帮助参数
+    for arg in "$@"; do
+        if [[ "$arg" == "-h" ]] || [[ "$arg" == "--help" ]]; then
+            show_help
+            exit 0
+        fi
+    done
+    
     log_info "=========================================="
     log_info "实验资源清理脚本"
     log_info "=========================================="
@@ -152,17 +223,28 @@ main() {
     # 检查权限
     if [ "$EUID" -ne 0 ]; then 
         log_warning "建议使用sudo运行以清理所有资源"
+        log_info "如遇权限问题，请使用: sudo bash $0 $*"
     fi
+    
+    echo ""
+    log_info "清理配置:"
+    log_info "  VM名称: ${VM_NAME}"
+    log_info "  容器名称: ${DOCKER_CONTAINER_NAME}"
+    log_info "  清理结果: ${CLEAN_ALL}"
+    echo ""
     
     # 清理VM
     cleanup_vm
+    echo ""
     
     # 清理Docker
     cleanup_docker
+    echo ""
     
     # 清理结果目录（可选）
     cleanup_results
     
+    echo ""
     log_success "=========================================="
     log_success "清理完成！"
     log_success "=========================================="

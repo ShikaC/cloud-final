@@ -1,0 +1,145 @@
+# =============================================================================
+# Git忽略文件配置
+# =============================================================================
+# 指定哪些文件和目录不应该被提交到版本控制系统
+#
+# 适用于：虚拟化 vs 容器性能对比实验项目
+# =============================================================================
+
+# Python 虚拟环境
+venv/
+env/
+ENV/
+.venv/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# Python 包安装目录
+pip-log.txt
+pip-delete-this-directory.txt
+.installed.cfg
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.manifest
+*.spec
+
+# 实验结果数据（运行时产生）
+results/
+*.csv
+*.txt
+*.log
+
+# 图表和可视化输出
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+
+# 备份文件
+*.bak
+*.backup
+*.old
+*~
+*.swp
+*.swo
+
+# 临时文件
+.tmp/
+tmp/
+temp/
+*.tmp
+
+# IDE 和编辑器
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# 系统文件
+.Trash-*/
+*.core
+core.*
+
+# KVM/QEMU 相关
+*.qcow2
+*.img
+*.iso
+
+# Docker 相关
+.dockerignore
+
+# 日志文件
+*.log
+logs/
+
+# 测试和覆盖率报告
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.hypothesis/
+
+# 文档构建输出
+_build/
+.readthedocs/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 操作系统生成的文件
+*.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 压缩文件
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# 编译产物
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Node.js (如果有前端部分)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 其他
+.cache/
+*.pid
+*.seed
+*.pid.lock
+

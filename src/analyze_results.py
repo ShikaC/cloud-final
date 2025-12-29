@@ -15,47 +15,85 @@ import os
 import sys
 import argparse
 import csv
+import logging
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, Any, Optional, List
 
 
-def read_file_content(filepath, default="0"):
-    """读取文件内容"""
+def read_file_content(filepath: Path, default: str = "0") -> str:
+    """读取文件内容
+    
+    Args:
+        filepath: 文件路径
+        default: 文件不存在或读取失败时的默认值
+        
+    Returns:
+        文件内容或默认值
+    """
     try:
-        if os.path.exists(filepath):
+        if filepath.exists():
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
                 return content if content else default
+        logging.debug(f"文件不存在: {filepath}")
         return default
     except Exception as e:
+        logging.warning(f"读取文件失败 {filepath}: {e}")
         return default
 
 
-def parse_number(value, default=0):
-    """将字符串转换为数字"""
+def parse_number(value: Any, default: float = 0.0) -> float:
+    """将字符串转换为数字
+    
+    Args:
+        value: 要转换的值
+        default: 转换失败时的默认值
+        
+    Returns:
+        转换后的数字或默认值
+    """
     try:
-        value = str(value).strip().replace('MB', '').replace('GB', '').replace('KB', '').replace('B', '')
-        return float(value)
-    except:
+        value_str = str(value).strip()
+        for unit in ['MB', 'GB', 'KB', 'B']:
+            value_str = value_str.replace(unit, '')
+        return float(value_str)
+    except (ValueError, TypeError) as e:
+        logging.debug(f"数字解析失败 '{value}': {e}")
         return default
 
 
-def format_bytes(bytes_value):
-    """格式化字节数为人类可读格式"""
+def format_bytes(bytes_value: Any) -> str:
+    """格式化字节数为人类可读格式
+    
+    Args:
+        bytes_value: 字节数
+        
+    Returns:
+        格式化后的字符串（如 "1.50 MB"）
+    """
     try:
-        bytes_value = float(bytes_value)
+        value = float(bytes_value)
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if bytes_value < 1024.0:
-                return f"{bytes_value:.2f} {unit}"
-            bytes_value /= 1024.0
-        return f"{bytes_value:.2f} PB"
-    except:
+            if value < 1024.0:
+                return f"{value:.2f} {unit}"
+            value /= 1024.0
+        return f"{value:.2f} PB"
+    except (ValueError, TypeError):
         return str(bytes_value)
 
 
-def load_performance_data(vm_dir, docker_dir):
-    """加载性能数据"""
-    data = {
+def load_performance_data(vm_dir: str, docker_dir: str) -> Dict[str, Dict[str, Any]]:
+    """加载性能数据
+    
+    Args:
+        vm_dir: VM测试结果目录
+        docker_dir: Docker测试结果目录
+        
+    Returns:
+        包含VM和Docker性能数据的字典
+    """
+    data: Dict[str, Dict[str, Any]] = {
         'vm': {},
         'docker': {}
     }
@@ -101,10 +139,17 @@ def load_performance_data(vm_dir, docker_dir):
     return data
 
 
-def load_stress_data(stress_dir):
-    """加载压测数据"""
+def load_stress_data(stress_dir: str) -> Dict[str, Dict[str, float]]:
+    """加载压测数据
+    
+    Args:
+        stress_dir: 压测结果目录
+        
+    Returns:
+        包含VM和Docker压测数据的字典
+    """
     stress_dir_path = Path(stress_dir)
-    data = {
+    data: Dict[str, Dict[str, float]] = {
         'vm': {},
         'docker': {}
     }
@@ -144,10 +189,20 @@ def load_stress_data(stress_dir):
     return data
 
 
-def calculate_improvement(vm_value, docker_value, higher_is_better=True):
-    """计算改进百分比"""
+def calculate_improvement(vm_value: float, docker_value: float, 
+                         higher_is_better: bool = True) -> float:
+    """计算改进百分比
+    
+    Args:
+        vm_value: VM的指标值
+        docker_value: Docker的指标值
+        higher_is_better: True表示值越大越好，False表示值越小越好
+        
+    Returns:
+        改进百分比（正值表示Docker更好）
+    """
     if vm_value == 0 or docker_value == 0:
-        return 0
+        return 0.0
     
     if higher_is_better:
         # 值越大越好（如QPS）
@@ -159,10 +214,18 @@ def calculate_improvement(vm_value, docker_value, higher_is_better=True):
     return improvement
 
 
-def generate_report(perf_data, stress_data, output_file):
-    """生成分析报告"""
+def generate_report(perf_data: Dict[str, Dict[str, Any]], 
+                   stress_data: Dict[str, Dict[str, float]], 
+                   output_file: str) -> None:
+    """生成分析报告
     
-    report = []
+    Args:
+        perf_data: 性能数据
+        stress_data: 压测数据
+        output_file: 输出报告文件路径
+    """
+    logging.info(f"生成分析报告: {output_file}")
+    report: List[str] = []
     report.append("# 虚拟化 vs 容器性能对比分析报告\n")
     report.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     report.append("---\n\n")
@@ -401,30 +464,67 @@ def generate_report(perf_data, stress_data, output_file):
     print(f"✓ 分析报告已生成: {output_file}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description='实验结果分析')
+def main() -> None:
+    """主函数"""
+    parser = argparse.ArgumentParser(
+        description='实验结果分析',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python3 analyze_results.py \\
+    --vm-dir ./results/vm \\
+    --docker-dir ./results/docker \\
+    --stress-dir ./results \\
+    --output-file ./results/analysis_report.md \\
+    --verbose
+        """
+    )
     parser.add_argument('--vm-dir', required=True, help='VM测试结果目录')
     parser.add_argument('--docker-dir', required=True, help='Docker测试结果目录')
     parser.add_argument('--stress-dir', required=True, help='压测结果目录')
     parser.add_argument('--output-file', required=True, help='输出报告文件路径')
+    parser.add_argument('--verbose', '-v', action='store_true', help='显示详细日志')
     
     args = parser.parse_args()
+    
+    # 配置日志
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # 验证输入目录
+    for dir_arg, dir_path in [('vm-dir', args.vm_dir), 
+                               ('docker-dir', args.docker_dir), 
+                               ('stress-dir', args.stress_dir)]:
+        if not Path(dir_path).exists():
+            logging.error(f"目录不存在: {dir_path} (--{dir_arg})")
+            sys.exit(1)
     
     print("=" * 60)
     print("开始分析实验结果...")
     print("=" * 60)
     
-    # 加载数据
-    print("\n[1/2] 加载测试数据...")
-    perf_data = load_performance_data(args.vm_dir, args.docker_dir)
-    stress_data = load_stress_data(args.stress_dir)
-    
-    print("\n[2/2] 生成分析报告...")
-    generate_report(perf_data, stress_data, args.output_file)
-    
-    print("\n" + "=" * 60)
-    print("分析完成！")
-    print("=" * 60)
+    try:
+        # 加载数据
+        print("\n[1/2] 加载测试数据...")
+        perf_data = load_performance_data(args.vm_dir, args.docker_dir)
+        stress_data = load_stress_data(args.stress_dir)
+        
+        print("\n[2/2] 生成分析报告...")
+        generate_report(perf_data, stress_data, args.output_file)
+        
+        print("\n" + "=" * 60)
+        print("分析完成！")
+        print("=" * 60)
+    except Exception as e:
+        logging.error(f"分析过程中出现错误: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == '__main__':
