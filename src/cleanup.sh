@@ -58,61 +58,52 @@ log_warning() {
     echo -e "${YELLOW}[警告]${NC} $1"
 }
 
-# 清理VM
+# 清理VM测试（Nginx进程）
 cleanup_vm() {
-    log_info "清理VM: ${VM_NAME}"
+    log_info "清理VM测试Nginx进程"
     
-    # 检查virsh命令是否可用
-    if ! command -v virsh >/dev/null 2>&1; then
-        log_warning "virsh未安装，跳过VM清理"
-        return 0
-    fi
+    # 查找并停止测试Nginx进程
+    local nginx_pids=$(ps aux | grep "nginx.*-c /tmp/nginx-" | grep -v grep | awk '{print $2}')
     
-    # 检查VM是否存在
-    if virsh list --all 2>/dev/null | grep -q "${VM_NAME}"; then
-        # 停止VM
-        if virsh list 2>/dev/null | grep -q "${VM_NAME}"; then
-            log_info "停止VM..."
-            if virsh destroy "${VM_NAME}" 2>/dev/null; then
-                log_success "VM已停止"
-            else
-                log_warning "停止VM失败，可能已停止"
+    if [ -n "$nginx_pids" ]; then
+        log_info "停止Nginx测试进程..."
+        for pid in $nginx_pids; do
+            if kill -0 "$pid" 2>/dev/null; then
+                sudo kill "$pid" 2>/dev/null || true
+                log_info "已停止进程: $pid"
             fi
+        done
+        sleep 1
+        
+        # 强制停止未响应的进程
+        nginx_pids=$(ps aux | grep "nginx.*-c /tmp/nginx-" | grep -v grep | awk '{print $2}')
+        if [ -n "$nginx_pids" ]; then
+            for pid in $nginx_pids; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    sudo kill -9 "$pid" 2>/dev/null || true
+                    log_info "强制停止进程: $pid"
+                fi
+            done
         fi
         
-        # 删除VM定义
-        log_info "删除VM定义..."
-        if virsh undefine "${VM_NAME}" 2>/dev/null; then
-            log_success "VM定义已删除"
-        else
-            log_warning "删除VM定义失败"
-        fi
-        
-        log_success "VM已清理"
+        log_success "Nginx测试进程已清理"
     else
-        log_info "VM不存在，跳过"
+        log_info "未找到运行中的Nginx测试进程"
     fi
     
-    # 清理VM磁盘镜像
-    VM_DISK="/var/lib/libvirt/images/${VM_NAME}.qcow2"
-    if [ -f "${VM_DISK}" ]; then
-        log_info "删除VM磁盘镜像..."
-        sudo rm -f "${VM_DISK}"
-        log_success "VM磁盘镜像已删除"
-    fi
+    # 清理临时Nginx配置和文件
+    log_info "清理临时文件..."
+    sudo rm -f /tmp/nginx-*.conf 2>/dev/null || true
+    sudo rm -f /tmp/nginx-*.html 2>/dev/null || true
+    sudo rm -f /tmp/nginx-*.log 2>/dev/null || true
+    sudo rm -f /tmp/nginx-*.pid 2>/dev/null || true
+    log_success "临时文件已清理"
     
-    # 清理cloud-init ISO
-    CLOUD_INIT_ISO="/var/lib/libvirt/images/${VM_NAME}-cloudinit.iso"
-    if [ -f "${CLOUD_INIT_ISO}" ]; then
-        log_info "删除cloud-init ISO..."
-        sudo rm -f "${CLOUD_INIT_ISO}"
-    fi
-    
-    # 清理临时目录
-    CLOUD_INIT_DIR="/tmp/${VM_NAME}-cloudinit"
-    if [ -d "${CLOUD_INIT_DIR}" ]; then
-        log_info "清理临时目录..."
-        rm -rf "${CLOUD_INIT_DIR}"
+    # 迁移旧的 kvm 目录到 vm（如果存在）
+    if [ -d "results/kvm" ] && [ ! -d "results/vm" ]; then
+        log_info "检测到旧版 kvm 目录，重命名为 vm..."
+        mv results/kvm results/vm 2>/dev/null || true
+        log_success "目录已更新"
     fi
 }
 

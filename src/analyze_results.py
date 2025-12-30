@@ -232,14 +232,14 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     
     # 1. 执行摘要
     report.append("## 1. 执行摘要\n\n")
-    report.append("本报告对比了VM（KVM虚拟化）和Docker容器在部署相同应用（Nginx）时的性能表现，")
+    report.append("本报告对比了VM（VMWare虚拟化）和Docker容器在部署相同应用（Nginx）时的性能表现，")
     report.append("包括启动时间、资源占用、并发性能等关键指标。\n\n")
     
     # 2. 测试环境
     report.append("## 2. 测试环境\n\n")
     report.append("### 2.1 应用配置\n")
     report.append("- **测试应用**: Nginx Web服务器\n")
-    report.append("- **VM类型**: KVM虚拟机（Ubuntu 22.04）\n")
+    report.append("- **VM类型**: VMWare虚拟机（Ubuntu 22.04）\n")
     report.append("- **容器**: Docker容器（官方Nginx镜像）\n")
     report.append("- **测试工具**: Apache Bench (ab)\n\n")
     
@@ -252,7 +252,7 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     startup_improvement = calculate_improvement(vm_startup, docker_startup, higher_is_better=False)
     
     report.append("### 3.1 启动时间对比\n\n")
-    report.append("| 指标 | VM (KVM) | Docker | 差异 |\n")
+    report.append("| 指标 | VM (VMWare) | Docker | 差异 |\n")
     report.append("|------|----------|--------|------|\n")
     report.append(f"| 启动时间 | {vm_startup:.2f} 秒 | {docker_startup:.2f} 秒 | ")
     if startup_improvement > 0:
@@ -272,7 +272,7 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     memory_improvement = calculate_improvement(vm_memory, docker_memory, higher_is_better=False)
     
     report.append("### 3.2 内存占用对比\n\n")
-    report.append("| 指标 | VM (KVM) | Docker | 差异 |\n")
+    report.append("| 指标 | VM (VMWare) | Docker | 差异 |\n")
     report.append("|------|----------|--------|------|\n")
     report.append(f"| 内存使用 | {vm_memory:.1f} MB | {docker_memory:.1f} MB | ")
     if memory_improvement > 0:
@@ -292,7 +292,7 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     disk_improvement = calculate_improvement(vm_disk, docker_disk, higher_is_better=False)
     
     report.append("### 3.3 磁盘占用对比\n\n")
-    report.append("| 指标 | VM (KVM) | Docker | 差异 |\n")
+    report.append("| 指标 | VM (VMWare) | Docker | 差异 |\n")
     report.append("|------|----------|--------|------|\n")
     report.append(f"| 磁盘占用 | {format_bytes(vm_disk)} | {format_bytes(docker_disk)} | ")
     if disk_improvement > 0:
@@ -309,7 +309,7 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     # 3.4 并发性能（压测结果）
     if stress_data['vm'] or stress_data['docker']:
         report.append("### 3.4 并发性能对比（压测结果）\n\n")
-        report.append("| 指标 | VM (KVM) | Docker | 差异 |\n")
+        report.append("| 指标 | VM (VMWare) | Docker | 差异 |\n")
         report.append("|------|----------|--------|------|\n")
         
         vm_qps = stress_data['vm'].get('qps', 0)
@@ -344,7 +344,7 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     report.append("## 4. 隔离边界技术差异分析\n\n")
     
     report.append("### 4.1 内核隔离\n\n")
-    report.append("- **VM (KVM)**: ")
+    report.append("- **VM (VMWare)**: ")
     report.append("每个VM运行独立的操作系统内核，完全的内核隔离。")
     report.append("不同VM可以使用不同的操作系统和内核版本。")
     report.append("内核级别的安全隔离，一个VM的内核崩溃不会影响其他VM。\n\n")
@@ -355,7 +355,7 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     report.append("内核级别的安全风险：如果内核有漏洞，可能影响所有容器。\n\n")
     
     report.append("### 4.2 文件系统隔离\n\n")
-    report.append("- **VM (KVM)**: ")
+    report.append("- **VM (VMWare)**: ")
     report.append("每个VM有独立的虚拟磁盘，完全的文件系统隔离。")
     report.append("可以使用不同的文件系统类型（ext4, xfs, btrfs等）。")
     report.append("文件系统级别的安全隔离。\n\n")
@@ -366,7 +366,7 @@ def generate_report(perf_data: Dict[str, Dict[str, Any]],
     report.append("文件系统隔离通过命名空间实现，但共享底层存储。\n\n")
     
     report.append("### 4.3 网络隔离\n\n")
-    report.append("- **VM (KVM)**: ")
+    report.append("- **VM (VMWare)**: ")
     report.append("每个VM有独立的虚拟网卡，可以通过虚拟交换机连接。")
     report.append("支持完整的网络隔离和复杂的网络拓扑。")
     report.append("可以使用不同的网络协议栈配置。\n\n")

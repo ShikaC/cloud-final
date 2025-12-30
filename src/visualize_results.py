@@ -154,7 +154,7 @@ def plot_performance(perf_df: pd.DataFrame, out_dir: str) -> None:
         bar(axes[1, 0], perf_df, "platform", "memory_mb", "内存占用", "MB", "{:.1f}")
         bar(axes[1, 1], perf_df, "platform", "disk_mb", "磁盘占用", "MB", "{:.1f}")
         
-        fig.suptitle("KVM vs Docker 资源对比", fontsize=14, fontweight="bold")
+        fig.suptitle("VM vs Docker 资源对比", fontsize=14, fontweight="bold")
         fig.tight_layout()
         
         output_path = Path(out_dir) / "performance_comparison.png"

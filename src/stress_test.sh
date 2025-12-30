@@ -48,7 +48,7 @@ log_warning() { echo -e "${YELLOW}[警告]${NC} $*"; }
 
 write_placeholder() {
     log_warning "写入占位数据（所有指标为0）"
-    echo "kvm,0,0,0,0" >> "${OUTPUT_CSV}"
+    echo "vm,0,0,0,0" >> "${OUTPUT_CSV}"
     echo "docker,0,0,0,0" >> "${OUTPUT_CSV}"
     exit 0
 }
@@ -196,7 +196,7 @@ log "  输出文件: ${OUTPUT_CSV}"
 echo ""
 
 # 执行压测
-run_ab "kvm" "${VM_URL}"
+run_ab "vm" "${VM_URL}"
 echo ""
 run_ab "docker" "${DOCKER_URL}"
 

@@ -56,34 +56,8 @@ install_ubuntu_deps() {
     log_info "更新软件包列表..."
     sudo apt-get update
     
-    # 确保启用universe软件源（Ubuntu）
-    if [ -f /etc/apt/sources.list ]; then
-        if ! grep -q "universe" /etc/apt/sources.list 2>/dev/null; then
-            log_info "启用universe软件源..."
-            sudo add-apt-repository -y universe 2>/dev/null || true
-            sudo apt-get update
-        fi
-    fi
-    
-    log_info "安装KVM和相关工具..."
-    sudo apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils
-    # virt-install 可能在不同的包中，尝试多种方式
-    if ! sudo apt-get install -y virt-install 2>/dev/null; then
-        log_info "尝试安装 virtinst 包（包含 virt-install）..."
-        sudo apt-get install -y virtinst || {
-            log_warning "virt-install 安装失败，尝试安装完整虚拟化工具包..."
-            sudo apt-get install -y virt-manager virt-viewer || {
-                log_error "无法安装 virt-install，请手动安装"
-                log_info "可以尝试: sudo apt-get install -y virtinst 或 sudo apt-get install -y virt-manager"
-            }
-        }
-    fi
-    sudo apt-get install -y qemu-utils
-    # genisoimage 或 mkisofs
-    if ! sudo apt-get install -y genisoimage 2>/dev/null; then
-        log_info "安装 mkisofs（genisoimage 的替代）..."
-        sudo apt-get install -y mkisofs || log_warning "无法安装 ISO 创建工具"
-    fi
+    log_info "安装Nginx..."
+    sudo apt-get install -y nginx
     
     log_info "安装Docker..."
     sudo apt-get install -y docker.io docker-compose
@@ -98,7 +72,7 @@ install_ubuntu_deps() {
     sudo apt-get install -y build-essential
     
     log_info "安装其他工具..."
-    sudo apt-get install -y curl wget bc ssh-client
+    sudo apt-get install -y curl wget bc net-tools
     
     log_success "Ubuntu/Debian依赖安装完成"
 }
@@ -108,9 +82,8 @@ install_centos_deps() {
     log_info "更新软件包列表..."
     sudo yum update -y
     
-    log_info "安装KVM和相关工具..."
-    sudo yum install -y qemu-kvm libvirt libvirt-python libguestfs-tools virt-install virt-manager
-    sudo yum install -y genisoimage
+    log_info "安装Nginx..."
+    sudo yum install -y nginx
     
     log_info "安装Docker..."
     sudo yum install -y yum-utils
@@ -127,7 +100,7 @@ install_centos_deps() {
     sudo yum install -y gcc gcc-c++ make
     
     log_info "安装其他工具..."
-    sudo yum install -y curl wget bc openssh-clients
+    sudo yum install -y curl wget bc net-tools
     
     log_success "CentOS/RHEL依赖安装完成"
 }
@@ -312,31 +285,26 @@ install_python_deps() {
     log_success "Python依赖安装完成"
 }
 
-# 配置KVM
-configure_kvm() {
-    log_info "配置KVM..."
+# 配置系统环境
+configure_system() {
+    log_info "配置系统环境..."
     
-    # 检查CPU虚拟化支持
-    if egrep -c '(vmx|svm)' /proc/cpuinfo > 0; then
-        log_success "CPU支持虚拟化"
+    # 确保Nginx服务可用
+    if systemctl list-unit-files | grep -q nginx.service; then
+        log_success "Nginx服务已安装"
     else
-        log_warning "CPU可能不支持虚拟化，VM测试可能无法运行"
+        log_warning "Nginx服务未正确安装"
     fi
     
-    # 启动libvirt服务
-    sudo systemctl enable libvirtd
-    sudo systemctl start libvirtd
-    
-    # 检查默认网络
-    if sudo virsh net-list --all | grep -q "default.*active"; then
-        log_success "Libvirt默认网络已启动"
+    # 确保Docker服务运行
+    if systemctl is-active --quiet docker; then
+        log_success "Docker服务正在运行"
     else
-        log_info "启动Libvirt默认网络..."
-        sudo virsh net-start default 2>/dev/null || true
-        sudo virsh net-autostart default 2>/dev/null || true
+        log_info "启动Docker服务..."
+        sudo systemctl start docker
     fi
     
-    log_success "KVM配置完成"
+    log_success "系统配置完成"
 }
 
 # 验证安装
@@ -350,17 +318,7 @@ verify_installation() {
     VENV_DIR="${SCRIPT_DIR}/venv"
     
     # 检查命令
-    command -v virsh >/dev/null 2>&1 || { log_error "virsh未安装"; all_ok=false; }
-    command -v virt-install >/dev/null 2>&1 || { 
-        log_warning "virt-install未找到，检查替代方案..."; 
-        if command -v virt-manager >/dev/null 2>&1; then
-            log_info "找到 virt-manager，可能包含 virt-install"
-        else
-            log_error "virt-install未安装，VM测试可能无法运行"
-            log_info "可以尝试手动安装: sudo apt-get install -y virtinst"
-            all_ok=false
-        fi
-    }
+    command -v nginx >/dev/null 2>&1 || { log_error "nginx未安装"; all_ok=false; }
     command -v docker >/dev/null 2>&1 || { log_error "docker未安装"; all_ok=false; }
     command -v python3 >/dev/null 2>&1 || { log_error "python3未安装"; all_ok=false; }
     command -v ab >/dev/null 2>&1 || { log_error "ab工具未安装"; all_ok=false; }
@@ -462,8 +420,8 @@ main() {
     # 安装Python依赖
     install_python_deps
     
-    # 配置KVM
-    configure_kvm
+    # 配置系统环境
+    configure_system
     
     # 验证安装
     if verify_installation; then
