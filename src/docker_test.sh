@@ -16,9 +16,8 @@ CONTAINER_NAME="docker-nginx"
 APP_PORT=8080
 OUTPUT_DIR="./results/docker"
 PERF_CSV=""
-# 固定 Nginx 版本（要求：1.28.1版本不变）
-# 说明：使用 alpine 变体可以更符合“容器轻量化”预期（内存更低/启动更快）。
-IMAGE="nginx:1.28.1-alpine"
+# 默认镜像（最终以 run_experiment.sh 传入的 --image 为准）
+IMAGE="nginx:1.26.3-alpine"
 
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'

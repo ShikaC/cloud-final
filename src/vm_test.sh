@@ -334,6 +334,33 @@ DISK_KB=$((DISK_KB + NGINX_LIBS_KB))
 
 DISK_MB=$(python3 -c "print(round(${DISK_KB} / 1024, 2))" 2>/dev/null || echo "0")
 
+# ============================================================================
+# 【启动时间口径（选项2）】从“启动 VM”开始
+# VM 启动时间 = systemd 启动完成耗时（kernel+userspace） + nginx 服务启动到就绪耗时
+# 说明：脚本运行发生在 VM 启动之后，无法直接测到人工操作延迟；
+#       这里采用 systemd-analyze time 的机器可复现口径，避免人为时间进入指标。
+# ============================================================================
+BOOT_TIME_SEC=$(
+    systemd-analyze time 2>/dev/null | python3 - <<'PY'
+import re, sys
+s = sys.stdin.read()
+total = 0.0
+nums = re.findall(r'([0-9.]+)s\s*\((?:kernel|userspace)\)', s)
+if nums:
+    total = sum(float(x) for x in nums)
+else:
+    m = re.search(r'=\s*([0-9.]+)s', s)
+    if m:
+        total = float(m.group(1))
+print(total)
+PY
+)
+[[ -z "${BOOT_TIME_SEC}" ]] && BOOT_TIME_SEC="0"
+STARTUP_TIME=$(python3 - <<PY
+print(round(float("${BOOT_TIME_SEC}") + float("${STARTUP_TIME}"), 6))
+PY
+)
+
 # 保存指标
 cat > "${OUTPUT_DIR}/metrics.csv" <<EOF
 metric,value

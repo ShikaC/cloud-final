@@ -165,19 +165,29 @@ run_docker_test() {
     echo -e "${BOLD}${BLUE}━━━━ 步骤 2/4: Docker容器测试 ━━━━${NC}"
     echo ""
     
+    # 为保证公平对等：Docker 镜像 Nginx 版本跟随 VM 上的 nginx 版本（例如 nginx/1.26.3）
+    local vm_nginx_ver=""
+    if command -v nginx >/dev/null 2>&1; then
+        vm_nginx_ver=$(nginx -v 2>&1 | sed -E 's#.*nginx/([0-9.]+).*#\\1#')
+    fi
+    local docker_image="nginx:1.26.3-alpine"
+    [[ -n "${vm_nginx_ver}" ]] && docker_image="nginx:${vm_nginx_ver}-alpine"
+
     if ! docker info >/dev/null 2>&1; then
         log_warning "Docker需要sudo权限"
         sudo bash "${SCRIPT_DIR}/docker_test.sh" \
             --container-name "docker-nginx" \
             --app-port "${APP_PORT}" \
             --output-dir "${RESULT_DIR}/docker" \
-            --perf-csv "${PERF_CSV}" || return 1
+            --perf-csv "${PERF_CSV}" \
+            --image "${docker_image}" || return 1
     else
         bash "${SCRIPT_DIR}/docker_test.sh" \
             --container-name "docker-nginx" \
             --app-port "${APP_PORT}" \
             --output-dir "${RESULT_DIR}/docker" \
-            --perf-csv "${PERF_CSV}" || return 1
+            --perf-csv "${PERF_CSV}" \
+            --image "${docker_image}" || return 1
     fi
     
     log_success "Docker测试完成"
