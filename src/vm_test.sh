@@ -128,22 +128,35 @@ sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
 log "配置Nginx监听端口 ${APP_PORT}..."
 # 创建临时配置文件
 NGINX_CONF="/tmp/nginx_test_${APP_PORT}.conf"
+
+# 获取CPU核心数（用于worker_processes配置）
+CPU_CORES=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 2)
+
 cat > "${NGINX_CONF}" <<NGINXEOF
 user www-data;
-worker_processes auto;
+worker_processes ${CPU_CORES};
+worker_cpu_affinity auto;
 pid /tmp/nginx_test_${APP_PORT}.pid;
 
 events {
-    worker_connections 768;
+    use epoll;
+    worker_connections 10240;
+    multi_accept on;
 }
 
 http {
     access_log /tmp/nginx_access_${APP_PORT}.log;
     error_log /tmp/nginx_error_${APP_PORT}.log;
     
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    keepalive_requests 1000;
+    
     server {
         # 只监听 VM 的内网 IP，避免与 Docker 在同一端口冲突（Docker 仅绑定 127.0.0.1）
-        listen ${VM_IP}:${APP_PORT};
+        listen ${VM_IP}:${APP_PORT} reuseport;
         server_name ${VM_IP};
         
         location / {

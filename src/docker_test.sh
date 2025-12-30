@@ -109,8 +109,60 @@ docker pull "${IMAGE}" >/dev/null 2>&1 || {
 # docker start 相当于VM的nginx启动（服务启动阶段）
 # ============================================================================
 log "创建容器（预准备阶段，不计入启动时间）..."
+
+# 获取CPU核心数（用于worker_processes配置和容器资源限制）
+CPU_CORES=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 2)
+
+# 创建优化的Nginx配置文件（与VM配置完全一致）
+NGINX_CONF_DIR="/tmp/docker_nginx_conf_${CONTAINER_NAME}"
+mkdir -p "${NGINX_CONF_DIR}"
+
+cat > "${NGINX_CONF_DIR}/nginx.conf" <<NGINXEOF
+user nginx;
+worker_processes ${CPU_CORES};
+worker_cpu_affinity auto;
+pid /var/run/nginx.pid;
+
+events {
+    use epoll;
+    worker_connections 10240;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+    
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    keepalive_requests 1000;
+    
+    server {
+        listen 80 reuseport;
+        server_name localhost;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html index.htm;
+        }
+    }
+}
+NGINXEOF
+
 # 使用主机网络模式（--network host），消除Docker网络转发损耗
-docker create --name "${CONTAINER_NAME}" --network host "${IMAGE}" >/dev/null || {
+# 添加CPU资源限制，确保与VM使用相同的CPU核心数
+# 挂载优化的Nginx配置文件
+docker create \
+    --name "${CONTAINER_NAME}" \
+    --network host \
+    --cpus="${CPU_CORES}" \
+    -v "${NGINX_CONF_DIR}/nginx.conf:/etc/nginx/nginx.conf:ro" \
+    "${IMAGE}" >/dev/null || {
     log_error "创建容器失败"
     write_placeholder
 }

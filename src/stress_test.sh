@@ -13,8 +13,8 @@ set -euo pipefail
 
 VM_URL="http://localhost:8080"
 DOCKER_URL="http://localhost:80"
-TOTAL_REQUESTS=2000
-CONCURRENCY=50
+TOTAL_REQUESTS=10000
+CONCURRENCY=1000
 OUTPUT_DIR="./results"
 OUTPUT_CSV="./results/stress.csv"
 

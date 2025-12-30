@@ -195,8 +195,8 @@ run_stress_test() {
     if ! bash "${SCRIPT_DIR}/stress_test.sh" \
         --vm-url "${vm_url}" \
         --docker-url "${docker_url}" \
-        --requests 2000 \
-        --concurrency 50 \
+        --requests 10000 \
+        --concurrency 1000 \
         --output-dir "${RESULT_DIR}" \
         --output-csv "${STRESS_CSV}"; then
         log_error "压测失败"
