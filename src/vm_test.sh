@@ -108,10 +108,12 @@ sudo systemctl stop nginx 2>/dev/null || true
 sudo pkill -9 nginx 2>/dev/null || true
 
 # 确保nginx完全停止，清理所有残留进程和文件
-sleep 0.5
-sudo rm -f /tmp/nginx_test_*.pid /tmp/nginx_*.log 2>/dev/null || true
+sleep 1
+sudo rm -f /tmp/nginx_test_*.pid 2>/dev/null || true
+sudo rm -f /tmp/nginx_*.log 2>/dev/null || true
+sudo rm -f /var/run/nginx.pid 2>/dev/null || true
 
-# 冷启动对等：清理文件缓存
+# 清理系统缓存，确保冷启动测试（与Docker公平对比）
 sync
 sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
 
@@ -149,11 +151,15 @@ if [[ ! -d "/usr/share/nginx/html" ]]; then
     echo "<html><body><h1>Welcome to nginx!</h1></body></html>" | sudo tee /usr/share/nginx/html/index.html >/dev/null
 fi
 
+# ============================================================================
+# 【启动时间测量】
+# 测量从执行nginx命令到服务完全就绪的时间
+# 与Docker的docker start对等（不含容器创建时间）
+# ============================================================================
 log "启动Nginx..."
-# 记录启动前的时间（冷启动）
 START_TIME=$(date +%s.%N)
 
-# 使用自定义配置启动nginx
+# 启动nginx
 sudo nginx -c "${NGINX_CONF}" || {
     log_error "Nginx启动失败"
     write_placeholder
@@ -171,10 +177,10 @@ for i in {1..30}; do
             ready=true
             break
         fi
-        sleep 0.2
+        sleep 0.1
     else
         success_count=0
-        sleep 0.5
+        sleep 0.3
     fi
 done
 
@@ -183,7 +189,6 @@ if [[ "$ready" != true ]]; then
     write_placeholder
 fi
 
-# 记录就绪时间
 END_TIME=$(date +%s.%N)
 STARTUP_TIME=$(python3 <<PY
 from decimal import Decimal
@@ -193,36 +198,93 @@ PY
 
 log_success "Nginx已启动 (${STARTUP_TIME}秒)"
 
+# ============================================================================
+# 【性能指标采集】
+# 在有负载情况下采集，确保CPU有真实消耗
+# ============================================================================
 log "采集性能指标..."
 
-# 预热：发送少量请求让进程稳定，确保采样有真实消耗
-for i in {1..20}; do
-    curl -s -o /dev/null "http://localhost:${APP_PORT}" 2>/dev/null || true
+# 【关键修复】先产生负载，再采集CPU
+log "产生负载以获取真实CPU数据..."
+for i in {1..50}; do
+    curl -s -o /dev/null "http://localhost:${APP_PORT}" &
 done
-sleep 1
+wait
+sleep 0.5
 
-# CPU使用率 - 汇总所有nginx进程，三次采样取均值
-CPU_PERCENT="0"
+# ============================================================================
+# 【CPU测量】统计所有nginx进程的CPU使用率
+# 方法：ps -C nginx，与Docker的进程级统计对等
+# ============================================================================
 CPU_SUM=0
-if pgrep -x nginx >/dev/null 2>&1; then
-    for i in {1..3}; do
-        SAMPLE=$(ps -C nginx -o %cpu --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
-        CPU_SUM=$(python3 -c "print(${CPU_SUM} + (${SAMPLE:-0}))" 2>/dev/null || echo "0")
-        [[ $i -lt 3 ]] && sleep 1
+SAMPLE_COUNT=5
+for i in $(seq 1 $SAMPLE_COUNT); do
+    # 在采样期间持续产生请求
+    for j in {1..10}; do
+        curl -s -o /dev/null "http://localhost:${APP_PORT}" &
     done
-    CPU_PERCENT=$(python3 -c "print(round(${CPU_SUM} / 3, 2))" 2>/dev/null || echo "0")
+    # 汇总所有nginx进程的CPU
+    SAMPLE=$(ps -C nginx -o %cpu --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    CPU_SUM=$(python3 -c "print(${CPU_SUM} + ${SAMPLE})" 2>/dev/null || echo "0")
+    sleep 0.5
+done
+wait
+CPU_PERCENT=$(python3 -c "print(round(${CPU_SUM} / ${SAMPLE_COUNT}, 2))" 2>/dev/null || echo "0")
+
+# ============================================================================
+# 【内存测量】统计所有nginx进程的RSS内存
+# 方法：ps -C nginx -o rss，与Docker的进程级统计对等
+# ============================================================================
+MEMORY_KB=$(ps -C nginx -o rss --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+MEMORY_MB=$(python3 -c "print(round(${MEMORY_KB} / 1024, 2))" 2>/dev/null || echo "0")
+
+# ============================================================================
+# 【磁盘测量】统计nginx相关的所有文件
+# 包括：可执行文件、配置文件、模块、日志目录、html目录、依赖库
+# 与Docker镜像包含的内容对等
+# ============================================================================
+DISK_KB=0
+
+# nginx可执行文件和核心模块
+if [[ -f /usr/sbin/nginx ]]; then
+    NGINX_BIN_KB=$(du -sk /usr/sbin/nginx 2>/dev/null | awk '{print $1}' || echo 0)
+    DISK_KB=$((DISK_KB + NGINX_BIN_KB))
 fi
 
-# 内存使用 (MB) - 汇总所有nginx进程RSS
-if pgrep -x nginx >/dev/null 2>&1; then
-    MEMORY_KB=$(ps -C nginx -o rss --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
-    MEMORY_MB=$(python3 -c "print(round(${MEMORY_KB} / 1024, 2))" 2>/dev/null || echo "0")
-else
-    MEMORY_MB="0"
+# nginx配置目录
+if [[ -d /etc/nginx ]]; then
+    NGINX_CONF_KB=$(du -sk /etc/nginx 2>/dev/null | awk '{print $1}' || echo 0)
+    DISK_KB=$((DISK_KB + NGINX_CONF_KB))
 fi
 
-# 磁盘使用 (MB) - 统计nginx相关目录的实际占用
-DISK_KB=$(du -sk /etc/nginx /usr/sbin/nginx /usr/share/nginx /var/log/nginx 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+# nginx html目录
+if [[ -d /usr/share/nginx ]]; then
+    NGINX_HTML_KB=$(du -sk /usr/share/nginx 2>/dev/null | awk '{print $1}' || echo 0)
+    DISK_KB=$((DISK_KB + NGINX_HTML_KB))
+fi
+
+# nginx模块目录
+if [[ -d /usr/lib/nginx ]]; then
+    NGINX_MOD_KB=$(du -sk /usr/lib/nginx 2>/dev/null | awk '{print $1}' || echo 0)
+    DISK_KB=$((DISK_KB + NGINX_MOD_KB))
+fi
+
+# nginx日志目录
+if [[ -d /var/log/nginx ]]; then
+    NGINX_LOG_KB=$(du -sk /var/log/nginx 2>/dev/null | awk '{print $1}' || echo 0)
+    DISK_KB=$((DISK_KB + NGINX_LOG_KB))
+fi
+
+# nginx运行时目录
+if [[ -d /var/lib/nginx ]]; then
+    NGINX_VAR_KB=$(du -sk /var/lib/nginx 2>/dev/null | awk '{print $1}' || echo 0)
+    DISK_KB=$((DISK_KB + NGINX_VAR_KB))
+fi
+
+# nginx依赖的共享库（估算主要依赖）
+NGINX_LIBS_KB=$(ldd /usr/sbin/nginx 2>/dev/null | awk '{print $3}' | xargs -I{} du -sk {} 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+DISK_KB=$((DISK_KB + NGINX_LIBS_KB))
+
 DISK_MB=$(python3 -c "print(round(${DISK_KB} / 1024, 2))" 2>/dev/null || echo "0")
 
 # VM IP地址
@@ -242,10 +304,8 @@ echo "${VM_IP}" > "${OUTPUT_DIR}/vm_ip.txt"
 
 [[ -n "${PERF_CSV}" ]] && echo "vm,${STARTUP_TIME},${CPU_PERCENT},${MEMORY_MB},${DISK_MB}" >> "${PERF_CSV}"
 
-# 清理：停止Nginx以释放端口，避免影响后续Docker测试
-log "清理Nginx进程..."
-sudo pkill -9 nginx 2>/dev/null || true
-sudo rm -f "/tmp/nginx_test_${APP_PORT}.pid" 2>/dev/null || true
+# 注意：不清理Nginx，让压测脚本可以使用
+# 清理工作由 cleanup.sh 或 run_experiment.sh 完成
 
 echo ""
 log_success "VM测试完成"
