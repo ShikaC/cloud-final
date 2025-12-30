@@ -107,10 +107,44 @@ log "停止可能存在的Nginx服务..."
 sudo systemctl stop nginx 2>/dev/null || true
 sudo pkill -9 nginx 2>/dev/null || true
 
-log "配置并启动Nginx..."
+log "配置Nginx监听端口 ${APP_PORT}..."
+# 创建临时配置文件
+NGINX_CONF="/tmp/nginx_test_${APP_PORT}.conf"
+cat > "${NGINX_CONF}" <<NGINXEOF
+user www-data;
+worker_processes auto;
+pid /tmp/nginx_test_${APP_PORT}.pid;
+
+events {
+    worker_connections 768;
+}
+
+http {
+    access_log /tmp/nginx_access_${APP_PORT}.log;
+    error_log /tmp/nginx_error_${APP_PORT}.log;
+    
+    server {
+        listen ${APP_PORT};
+        server_name localhost;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html index.htm;
+        }
+    }
+}
+NGINXEOF
+
+# 如果nginx html目录不存在，使用默认HTML
+if [[ ! -d "/usr/share/nginx/html" ]]; then
+    sudo mkdir -p /usr/share/nginx/html
+    echo "<html><body><h1>Welcome to nginx!</h1></body></html>" | sudo tee /usr/share/nginx/html/index.html >/dev/null
+fi
+
+log "启动Nginx..."
 START_TIME=$(date +%s.%N)
 
-sudo systemctl start nginx || {
+sudo nginx -c "${NGINX_CONF}" || {
     log_error "Nginx启动失败"
     write_placeholder
 }
@@ -118,8 +152,7 @@ sudo systemctl start nginx || {
 log "等待Nginx就绪..."
 ready=false
 for i in {1..30}; do
-    if curl -s -o /dev/null "http://localhost:${APP_PORT}" 2>/dev/null || \
-       curl -s -o /dev/null "http://localhost:80" 2>/dev/null; then
+    if curl -s -o /dev/null "http://localhost:${APP_PORT}" 2>/dev/null; then
         ready=true
         break
     fi
@@ -142,21 +175,46 @@ log_success "Nginx已启动 (${STARTUP_TIME}秒)"
 
 log "采集性能指标..."
 
-# CPU使用率
-CPU_PERCENT=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//' || echo "0")
+# 获取Nginx主进程PID
+NGINX_PID=$(pgrep -x nginx | head -1)
 
-# 内存使用 (MB)
-MEMORY_MB=$(free -m | awk '/^Mem:/ {print $3}')
+# CPU使用率 - 只统计Nginx进程
+if [[ -n "${NGINX_PID}" ]]; then
+    # 收集3次CPU样本取平均值，确保准确性
+    CPU_SUM=0
+    for i in {1..3}; do
+        CPU_VAL=$(ps -p ${NGINX_PID} -o %cpu --no-headers 2>/dev/null | awk '{print $1}' || echo "0")
+        CPU_SUM=$(python3 -c "print(${CPU_SUM} + ${CPU_VAL})" 2>/dev/null || echo "0")
+        [[ $i -lt 3 ]] && sleep 1
+    done
+    CPU_PERCENT=$(python3 -c "print(round(${CPU_SUM} / 3, 2))" 2>/dev/null || echo "0")
+else
+    CPU_PERCENT="0"
+fi
 
-# 磁盘使用 (转换为MB)
-DISK_BYTES=$(df / | awk 'NR==2 {print $3}')
-DISK_MB=$(python3 <<PY
-try:
-    print(float(${DISK_BYTES}) / 1024)
-except:
-    print(0)
-PY
-)
+# 内存使用 (MB) - 只统计Nginx进程（包括所有worker进程）
+if [[ -n "${NGINX_PID}" ]]; then
+    # 统计所有nginx进程的内存
+    MEMORY_KB=$(ps -C nginx -o rss --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum}' || echo "0")
+    MEMORY_MB=$(python3 -c "print(round(${MEMORY_KB} / 1024, 2))" 2>/dev/null || echo "0")
+else
+    MEMORY_MB="0"
+fi
+
+# 磁盘使用 (MB) - 只计算Nginx安装大小
+# 获取nginx可执行文件和相关文件的大小
+NGINX_SIZE=$(dpkg-query -W -f='${Installed-Size}' nginx 2>/dev/null || \
+             rpm -q nginx --qf '%{SIZE}' 2>/dev/null || echo "0")
+# dpkg返回KB，rpm返回字节，统一转换为MB
+if dpkg-query -W nginx >/dev/null 2>&1; then
+    DISK_MB=$(python3 -c "print(round(${NGINX_SIZE} / 1024, 2))" 2>/dev/null || echo "0")
+elif rpm -q nginx >/dev/null 2>&1; then
+    DISK_MB=$(python3 -c "print(round(${NGINX_SIZE} / 1024 / 1024, 2))" 2>/dev/null || echo "0")
+else
+    # 如果无法从包管理器获取，估算nginx目录大小
+    DISK_KB=$(du -sk /usr/sbin/nginx /etc/nginx /usr/share/nginx 2>/dev/null | awk '{sum+=$1} END {print sum}' || echo "0")
+    DISK_MB=$(python3 -c "print(round(${DISK_KB} / 1024, 2))" 2>/dev/null || echo "0")
+fi
 
 # VM IP地址
 VM_IP=$(hostname -I | awk '{print $1}' || echo "127.0.0.1")

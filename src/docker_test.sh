@@ -16,7 +16,7 @@ CONTAINER_NAME="docker-nginx"
 APP_PORT=8080
 OUTPUT_DIR="./results/docker"
 PERF_CSV=""
-IMAGE="nginx:alpine"
+IMAGE="nginx:latest"
 
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -125,10 +125,17 @@ log_success "容器已启动 (${STARTUP_TIME}秒)"
 
 log "采集性能指标..."
 
-STATS=$(docker stats --no-stream --format "{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}}" "${CONTAINER_NAME}" | head -1)
-CPU_PERCENT=$(echo "${STATS}" | cut -d',' -f1 | tr -d '%')
-MEM_USAGE_RAW=$(echo "${STATS}" | cut -d',' -f2)
+# 收集3次CPU样本取平均值，确保与VM测试方法一致
+CPU_SUM=0
+for i in {1..3}; do
+    CPU_VAL=$(docker stats --no-stream --format "{{.CPUPerc}}" "${CONTAINER_NAME}" 2>/dev/null | tr -d '%' || echo "0")
+    CPU_SUM=$(python3 -c "print(${CPU_SUM} + float('${CPU_VAL}' or 0))" 2>/dev/null || echo "0")
+    [[ $i -lt 3 ]] && sleep 1
+done
+CPU_PERCENT=$(python3 -c "print(round(${CPU_SUM} / 3, 2))" 2>/dev/null || echo "0")
 
+# 内存使用 (MB) - 容器实际使用的内存
+MEM_USAGE_RAW=$(docker stats --no-stream --format "{{.MemUsage}}" "${CONTAINER_NAME}" 2>/dev/null)
 MEMORY_MB=$(python3 <<PY
 import re
 raw="${MEM_USAGE_RAW}"
@@ -140,19 +147,11 @@ print(f"{num:.2f}")
 PY
 )
 
+# 磁盘使用 (MB) - 只计算镜像大小（对应VM的Nginx安装大小）
 IMAGE_BYTES=$(docker image inspect "${IMAGE}" --format '{{.Size}}' 2>/dev/null || echo 0)
-CONTAINER_BYTES=$(docker container inspect --size "${CONTAINER_NAME}" --format '{{.SizeRootFs}}' 2>/dev/null || echo 0)
-DISK_BYTES=$(python3 <<PY
-try:
-    print(int("${IMAGE_BYTES}") + int("${CONTAINER_BYTES}"))
-except:
-    print(0)
-PY
-)
-
 DISK_MB=$(python3 <<PY
 try:
-    print(f"{float(${DISK_BYTES})/1024/1024:.2f}")
+    print(f"{float(${IMAGE_BYTES})/1024/1024:.2f}")
 except:
     print("0")
 PY

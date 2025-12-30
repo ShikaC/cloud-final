@@ -80,6 +80,13 @@ run_ab() {
         return 1
     fi
     
+    # 预热：发送少量请求让服务稳定
+    log "预热 ${name}..."
+    ab -n 100 -c 10 -q "${url}/" > /dev/null 2>&1 || true
+    sleep 2
+    
+    # 正式压测：确保两种模式使用完全相同的参数
+    log "正式压测 ${name}..."
     if ! ab -n "${TOTAL_REQUESTS}" -c "${CONCURRENCY}" -q "${url}/" > "${outfile}" 2>&1; then
         log_error "${name} 压测失败"
         echo "${name},0,0,0,0" >> "${OUTPUT_CSV}"

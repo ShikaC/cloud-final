@@ -306,7 +306,17 @@ activate_venv
 prepare_directories
 
 run_vm_test || log_warning "VM测试失败"
+
+# 等待系统稳定，确保测试公平性
+log "等待系统稳定..."
+sleep 3
+
 run_docker_test || log_warning "Docker测试失败"
+
+# 等待系统稳定，确保测试公平性
+log "等待系统稳定..."
+sleep 3
+
 run_stress_test || log_warning "压测失败"
 run_visualization || log_warning "可视化失败"
 
