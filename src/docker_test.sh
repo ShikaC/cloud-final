@@ -16,7 +16,9 @@ CONTAINER_NAME="docker-nginx"
 APP_PORT=8080
 OUTPUT_DIR="./results/docker"
 PERF_CSV=""
-IMAGE="nginx:latest"
+# 固定 Nginx 版本（要求：1.28.1版本不变）
+# 说明：使用 alpine 变体可以更符合“容器轻量化”预期（内存更低/启动更快）。
+IMAGE="nginx:1.28.1-alpine"
 
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -57,9 +59,13 @@ validate_docker() {
 }
 
 validate_port() {
-    if netstat -tuln 2>/dev/null | grep -q ":${APP_PORT} " || \
-       ss -tuln 2>/dev/null | grep -q ":${APP_PORT} "; then
-        log_error "端口 ${APP_PORT} 已被占用"
+    # 仅检查 127.0.0.1:APP_PORT 是否被占用（允许 VM_IP:APP_PORT 由 VM nginx 使用）
+    if ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -q "^127\\.0\\.0\\.1:${APP_PORT}$"; then
+        log_error "端口 127.0.0.1:${APP_PORT} 已被占用"
+        exit 1
+    fi
+    if netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q "^127\\.0\\.0\\.1:${APP_PORT}$"; then
+        log_error "端口 127.0.0.1:${APP_PORT} 已被占用"
         exit 1
     fi
 }
@@ -101,7 +107,8 @@ docker pull "${IMAGE}" >/dev/null 2>&1 || {
 # docker start 相当于VM的nginx启动（服务启动阶段）
 # ============================================================================
 log "创建容器（预准备阶段，不计入启动时间）..."
-docker create --name "${CONTAINER_NAME}" -p "${APP_PORT}:80" "${IMAGE}" >/dev/null || {
+# 仅绑定到 127.0.0.1，避免与 VM 在同一端口冲突（VM 仅监听 VM_IP:APP_PORT）
+docker create --name "${CONTAINER_NAME}" -p "127.0.0.1:${APP_PORT}:80" "${IMAGE}" >/dev/null || {
     log_error "创建容器失败"
     write_placeholder
 }
@@ -162,42 +169,55 @@ log "采集性能指标..."
 
 # 【关键修复】先产生负载，再采集CPU
 log "产生负载以获取真实CPU数据..."
-for i in {1..50}; do
-    curl -s -o /dev/null "http://localhost:${APP_PORT}" &
-done
-wait
-sleep 0.5
 
-# ============================================================================
-# 【CPU测量】统计容器内所有进程的CPU使用率
-# 方法：获取容器内PID，使用ps统计，与VM的测量方式对等
-# ============================================================================
-# 获取容器内的进程PID列表
-CONTAINER_PIDS=$(docker top "${CONTAINER_NAME}" -eo pid 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ',' | sed 's/,$//')
+# 获取容器内的 nginx 进程 PID（宿主机 PID），用于读取 /proc/<pid>/stat
+CONTAINER_NGINX_PIDS=$(docker top "${CONTAINER_NAME}" -eo pid,comm 2>/dev/null | awk 'NR>1 && $2 ~ /^nginx/ {print $1}')
 
-CPU_SUM=0
-SAMPLE_COUNT=5
-for i in $(seq 1 $SAMPLE_COUNT); do
-    # 在采样期间持续产生请求
-    for j in {1..10}; do
-        curl -s -o /dev/null "http://localhost:${APP_PORT}" &
+get_container_nginx_cpu_ticks() {
+    PIDS="${CONTAINER_NGINX_PIDS}" python3 - <<'PY'
+import os
+total = 0
+for pid in os.environ.get("PIDS", "").split():
+    try:
+        with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as f:
+            parts = f.read().split()
+        total += int(parts[13]) + int(parts[14])
+    except Exception:
+        pass
+print(total)
+PY
+}
+
+HZ=$(getconf CLK_TCK 2>/dev/null || echo 100)
+CPU_T0=$(get_container_nginx_cpu_ticks)
+T0=$(date +%s.%N)
+
+# 固定负载窗口：持续 2 秒打请求
+LOAD_END=$((SECONDS + 2))
+while [[ ${SECONDS} -lt ${LOAD_END} ]]; do
+    for j in {1..25}; do
+        curl -s -o /dev/null "http://localhost:${APP_PORT}/" &
     done
-    # 汇总容器内所有进程的CPU
-    if [[ -n "${CONTAINER_PIDS}" ]]; then
-        SAMPLE=$(ps -p ${CONTAINER_PIDS} -o %cpu --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum+0}' || echo "0")
-    else
-        SAMPLE="0"
-    fi
-    CPU_SUM=$(python3 -c "print(${CPU_SUM} + ${SAMPLE})" 2>/dev/null || echo "0")
-    sleep 0.5
+    wait
 done
-wait
-CPU_PERCENT=$(python3 -c "print(round(${CPU_SUM} / ${SAMPLE_COUNT}, 2))" 2>/dev/null || echo "0")
+
+CPU_T1=$(get_container_nginx_cpu_ticks)
+T1=$(date +%s.%N)
+
+CPU_PERCENT=$(python3 - <<PY
+from decimal import Decimal
+dt = float(Decimal("${T1}") - Decimal("${T0}"))
+dcpu = (${CPU_T1} - ${CPU_T0}) / float(${HZ})
+val = 0.0 if dt <= 0 else (dcpu / dt) * 100.0
+print(round(val, 2))
+PY
+)
 
 # ============================================================================
 # 【内存测量】统计容器内所有进程的RSS内存
 # 方法：获取容器内PID，使用ps统计RSS，与VM的测量方式对等
 # ============================================================================
+CONTAINER_PIDS=$(docker top "${CONTAINER_NAME}" -eo pid 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ',' | sed 's/,$//')
 if [[ -n "${CONTAINER_PIDS}" ]]; then
     MEMORY_KB=$(ps -p ${CONTAINER_PIDS} -o rss --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum+0}' || echo "0")
 else

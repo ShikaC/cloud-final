@@ -184,76 +184,32 @@ run_docker_test() {
     return 0
 }
 
-run_vm_stress() {
+run_stress_test() {
+    echo ""
+    echo -e "${BOLD}${BLUE}━━━━ 步骤 3/4: 压力测试 ━━━━${NC}"
+    echo ""
+    
     local vm_ip="localhost"
     [[ -f "${RESULT_DIR}/vm/vm_ip.txt" ]] && vm_ip=$(cat "${RESULT_DIR}/vm/vm_ip.txt")
+    
     local vm_url="http://${vm_ip}:${APP_PORT}"
-    
-    log "VM压测目标: ${vm_url}"
-    
-    # 初始化stress.csv（只在第一次调用时）
-    if [[ ! -f "${STRESS_CSV}" ]]; then
-        echo "platform,qps,avg_latency_ms,failed,transfer_kbps" > "${STRESS_CSV}"
-    fi
-    
-    # 预热
-    log "预热VM..."
-    ab -n 100 -c 10 -q "${vm_url}/" > /dev/null 2>&1 || true
-    sleep 1
-    
-    # 正式压测
-    log "正式压测VM..."
-    local outfile="${RESULT_DIR}/stress_vm.txt"
-    if ab -n 2000 -c 50 -q "${vm_url}/" > "${outfile}" 2>&1; then
-        local qps=$(grep "Requests per second" "${outfile}" 2>/dev/null | awk '{print $4}' | head -1)
-        local avg=$(grep "Time per request" "${outfile}" 2>/dev/null | head -1 | awk '{print $4}' | head -1)
-        local failed=$(grep "Failed requests" "${outfile}" 2>/dev/null | awk '{print $3}' | head -1)
-        local transfer=$(grep "Transfer rate" "${outfile}" 2>/dev/null | awk '{print $3}' | head -1)
-        echo "vm,${qps:-0},${avg:-0},${failed:-0},${transfer:-0}" >> "${STRESS_CSV}"
-        log_success "VM压测完成: QPS=${qps:-0}, 延迟=${avg:-0}ms"
-    else
-        echo "vm,0,0,0,0" >> "${STRESS_CSV}"
-        log_error "VM压测失败"
-    fi
-}
-
-run_docker_stress() {
     local docker_url="http://localhost:${APP_PORT}"
     
-    log "Docker压测目标: ${docker_url}"
+    log "压测目标: VM=${vm_url}, Docker=${docker_url}"
     
-    # 预热
-    log "预热Docker..."
-    ab -n 100 -c 10 -q "${docker_url}/" > /dev/null 2>&1 || true
-    sleep 1
-    
-    # 正式压测
-    log "正式压测Docker..."
-    local outfile="${RESULT_DIR}/stress_docker.txt"
-    if ab -n 2000 -c 50 -q "${docker_url}/" > "${outfile}" 2>&1; then
-        local qps=$(grep "Requests per second" "${outfile}" 2>/dev/null | awk '{print $4}' | head -1)
-        local avg=$(grep "Time per request" "${outfile}" 2>/dev/null | head -1 | awk '{print $4}' | head -1)
-        local failed=$(grep "Failed requests" "${outfile}" 2>/dev/null | awk '{print $3}' | head -1)
-        local transfer=$(grep "Transfer rate" "${outfile}" 2>/dev/null | awk '{print $3}' | head -1)
-        echo "docker,${qps:-0},${avg:-0},${failed:-0},${transfer:-0}" >> "${STRESS_CSV}"
-        log_success "Docker压测完成: QPS=${qps:-0}, 延迟=${avg:-0}ms"
-    else
-        echo "docker,0,0,0,0" >> "${STRESS_CSV}"
-        log_error "Docker压测失败"
+    if ! bash "${SCRIPT_DIR}/stress_test.sh" \
+        --vm-url "${vm_url}" \
+        --docker-url "${docker_url}" \
+        --requests 2000 \
+        --concurrency 50 \
+        --output-dir "${RESULT_DIR}" \
+        --output-csv "${STRESS_CSV}"; then
+        log_error "压测失败"
+        return 1
     fi
-}
-
-cleanup_vm() {
-    log "清理VM Nginx..."
-    sudo pkill -9 nginx 2>/dev/null || true
-    sudo rm -f /tmp/nginx_test_*.pid 2>/dev/null || true
-    sleep 1
-}
-
-cleanup_docker() {
-    log "清理Docker容器..."
-    docker rm -f docker-nginx 2>/dev/null || true
-    sleep 1
+    
+    log_success "压测完成"
+    return 0
 }
 
 run_visualization() {
@@ -349,47 +305,19 @@ check_and_fix_port
 activate_venv
 prepare_directories
 
-# ============================================================================
-# 【测试流程】
-# 为确保公平性，每个平台单独完成"性能测试+压测"后再清理
-# ============================================================================
-
-echo ""
-echo -e "${BOLD}${BLUE}━━━━ 阶段 1/3: VM 虚拟机测试 ━━━━${NC}"
-echo ""
-
-# VM性能测试
 run_vm_test || log_warning "VM测试失败"
 
-# VM压测（nginx仍在运行）
-log "开始VM压测..."
-run_vm_stress || log_warning "VM压测失败"
-
-# 清理VM nginx，释放端口
-cleanup_vm
-
-# 等待系统稳定
+# 等待系统稳定，确保测试公平性
 log "等待系统稳定..."
 sleep 2
 
-echo ""
-echo -e "${BOLD}${BLUE}━━━━ 阶段 2/3: Docker 容器测试 ━━━━${NC}"
-echo ""
-
-# Docker性能测试
 run_docker_test || log_warning "Docker测试失败"
 
-# Docker压测（容器仍在运行）
-log "开始Docker压测..."
-run_docker_stress || log_warning "Docker压测失败"
+# 等待系统稳定，确保测试公平性
+log "等待系统稳定..."
+sleep 2
 
-# 清理Docker容器
-cleanup_docker
-
-echo ""
-echo -e "${BOLD}${BLUE}━━━━ 阶段 3/3: 生成可视化图表 ━━━━${NC}"
-echo ""
-
+run_stress_test || log_warning "压测失败"
 run_visualization || log_warning "可视化失败"
 
 show_results

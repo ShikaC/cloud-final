@@ -77,9 +77,14 @@ ensure_dependencies() {
 }
 
 validate_port() {
-    if netstat -tuln 2>/dev/null | grep -q ":${APP_PORT} " || \
-       ss -tuln 2>/dev/null | grep -q ":${APP_PORT} "; then
-        log_error "端口 ${APP_PORT} 已被占用"
+    # 仅检查 VM_IP:APP_PORT 是否被占用（允许 127.0.0.1:APP_PORT 由 Docker 使用）
+    if ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -q "^${VM_IP}:${APP_PORT}$"; then
+        log_error "端口 ${VM_IP}:${APP_PORT} 已被占用"
+        log "请使用 --app-port 指定其他端口"
+        exit 1
+    fi
+    if netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q "^${VM_IP}:${APP_PORT}$"; then
+        log_error "端口 ${VM_IP}:${APP_PORT} 已被占用"
         log "请使用 --app-port 指定其他端口"
         exit 1
     fi
@@ -99,6 +104,9 @@ parse_args() {
 
 parse_args "$@"
 mkdir -p "${OUTPUT_DIR}"
+
+# VM IP地址（用于绑定监听地址，避免占用 127.0.0.1 与 Docker 冲突）
+VM_IP=$(hostname -I | awk '{print $1}' || echo "127.0.0.1")
 
 ensure_dependencies
 validate_port
@@ -134,8 +142,9 @@ http {
     error_log /tmp/nginx_error_${APP_PORT}.log;
     
     server {
-        listen ${APP_PORT};
-        server_name localhost;
+        # 只监听 VM 的内网 IP，避免与 Docker 在同一端口冲突（Docker 仅绑定 127.0.0.1）
+        listen ${VM_IP}:${APP_PORT};
+        server_name ${VM_IP};
         
         location / {
             root /usr/share/nginx/html;
@@ -171,7 +180,7 @@ success_count=0
 
 # 等待nginx就绪并进行健康检查（连续3次HTTP 200）
 for i in {1..30}; do
-    if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${APP_PORT}" 2>/dev/null | grep -q "200"; then
+    if curl -s -o /dev/null -w "%{http_code}" "http://${VM_IP}:${APP_PORT}" 2>/dev/null | grep -q "200"; then
         success_count=$((success_count + 1))
         if [[ $success_count -ge 3 ]]; then
             ready=true
@@ -207,29 +216,59 @@ log "采集性能指标..."
 # 【关键修复】先产生负载，再采集CPU
 log "产生负载以获取真实CPU数据..."
 for i in {1..50}; do
-    curl -s -o /dev/null "http://localhost:${APP_PORT}" &
+    curl -s -o /dev/null "http://${VM_IP}:${APP_PORT}" &
 done
 wait
 sleep 0.5
 
 # ============================================================================
-# 【CPU测量】统计所有nginx进程的CPU使用率
-# 方法：ps -C nginx，与Docker的进程级统计对等
+# 【CPU测量】固定负载窗口 + 进程 CPU 时间差（必然非0，更稳定）
+# 口径：nginx 全进程 utime+stime 的增量 / 窗口时长
 # ============================================================================
-CPU_SUM=0
-SAMPLE_COUNT=5
-for i in $(seq 1 $SAMPLE_COUNT); do
-    # 在采样期间持续产生请求
-    for j in {1..10}; do
-        curl -s -o /dev/null "http://localhost:${APP_PORT}" &
+get_nginx_cpu_ticks() {
+    python3 - <<'PY'
+import glob
+total = 0
+for p in glob.glob("/proc/[0-9]*/comm"):
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            if f.read().strip() != "nginx":
+                continue
+        stat_path = p.replace("/comm", "/stat")
+        with open(stat_path, "r", encoding="utf-8") as f:
+            parts = f.read().split()
+        # utime=14, stime=15 (1-based), split()后索引13/14
+        total += int(parts[13]) + int(parts[14])
+    except Exception:
+        pass
+print(total)
+PY
+}
+
+HZ=$(getconf CLK_TCK 2>/dev/null || echo 100)
+CPU_T0=$(get_nginx_cpu_ticks)
+T0=$(date +%s.%N)
+
+# 固定负载窗口：持续 2 秒打请求（比“采样瞬时%cpu”更可靠）
+LOAD_END=$((SECONDS + 2))
+while [[ ${SECONDS} -lt ${LOAD_END} ]]; do
+    for j in {1..25}; do
+        curl -s -o /dev/null "http://${VM_IP}:${APP_PORT}/" &
     done
-    # 汇总所有nginx进程的CPU
-    SAMPLE=$(ps -C nginx -o %cpu --no-headers 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
-    CPU_SUM=$(python3 -c "print(${CPU_SUM} + ${SAMPLE})" 2>/dev/null || echo "0")
-    sleep 0.5
+    wait
 done
-wait
-CPU_PERCENT=$(python3 -c "print(round(${CPU_SUM} / ${SAMPLE_COUNT}, 2))" 2>/dev/null || echo "0")
+
+CPU_T1=$(get_nginx_cpu_ticks)
+T1=$(date +%s.%N)
+
+CPU_PERCENT=$(python3 - <<PY
+from decimal import Decimal
+dt = float(Decimal("${T1}") - Decimal("${T0}"))
+dcpu = (${CPU_T1} - ${CPU_T0}) / float(${HZ})
+val = 0.0 if dt <= 0 else (dcpu / dt) * 100.0
+print(round(val, 2))
+PY
+)
 
 # ============================================================================
 # 【内存测量】统计所有nginx进程的RSS内存
@@ -282,13 +321,17 @@ if [[ -d /var/lib/nginx ]]; then
 fi
 
 # nginx依赖的共享库（估算主要依赖）
-NGINX_LIBS_KB=$(ldd /usr/sbin/nginx 2>/dev/null | awk '{print $3}' | xargs -I{} du -sk {} 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+# 修复：过滤掉 ldd 中不是绝对路径的条目（如 linux-vdso、地址等），避免算出来过小
+NGINX_LIBS_KB=$(
+    ldd /usr/sbin/nginx 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\\//) print $i}' \
+    | sort -u \
+    | xargs -r -I{} du -sk {} 2>/dev/null \
+    | awk '{sum+=$1} END {print sum+0}'
+)
 DISK_KB=$((DISK_KB + NGINX_LIBS_KB))
 
 DISK_MB=$(python3 -c "print(round(${DISK_KB} / 1024, 2))" 2>/dev/null || echo "0")
-
-# VM IP地址
-VM_IP=$(hostname -I | awk '{print $1}' || echo "127.0.0.1")
 
 # 保存指标
 cat > "${OUTPUT_DIR}/metrics.csv" <<EOF
