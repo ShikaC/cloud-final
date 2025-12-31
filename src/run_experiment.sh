@@ -213,11 +213,16 @@ run_analysis() {
     echo -e "${BOLD}${BLUE}━━━━ 步骤 4/5: 生成分析报告 ━━━━${NC}"
     echo ""
     
+    if [[ ! -f "${PERF_CSV}" ]] || [[ ! -f "${STRESS_CSV}" ]]; then
+        log_error "数据文件不完整，无法生成分析报告"
+        return 1
+    fi
+    
     if ! python3 "${SCRIPT_DIR}/analyze_results.py" \
-        --vm-dir "${RESULT_DIR}/vm" \
-        --docker-dir "${RESULT_DIR}/docker" \
-        --stress-dir "${RESULT_DIR}" \
-        --output-file "${RESULT_DIR}/analysis_report.md"; then
+        --performance-csv "${PERF_CSV}" \
+        --stress-csv "${STRESS_CSV}" \
+        --output-file "${RESULT_DIR}/analysis_report.md" \
+        --charts-dir "${VIS_DIR}"; then
         log_error "分析报告生成失败"
         return 1
     fi
